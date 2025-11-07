@@ -31,11 +31,34 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var (
-	name     string
-	interval string
-	script   string
+const (
+	labelPrefix      = "com.macron"
+	launchAgentsDirPerms = 0755
+	plistFilePerms       = 0644
 )
+
+var (
+	createName     string
+	createInterval string
+	createScript   string
+)
+
+// validateAndResolveScript validates the script exists and returns its absolute path
+func validateAndResolveScript(scriptPath string) (string, error) {
+	absScript, err := filepath.Abs(scriptPath)
+	if err != nil {
+		return "", fmt.Errorf("error resolving script path: %w", err)
+	}
+
+	if _, err := os.Stat(absScript); err != nil {
+		if os.IsNotExist(err) {
+			return "", fmt.Errorf("script file does not exist: %s", absScript)
+		}
+		return "", fmt.Errorf("error checking script file: %w", err)
+	}
+
+	return absScript, nil
+}
 
 // generatePlist creates the plist XML content for a launchd task
 func generatePlist(label, scriptPath string, intervalSeconds int) string {
@@ -61,69 +84,60 @@ func generatePlist(label, scriptPath string, intervalSeconds int) string {
 </plist>`, label, scriptPath, intervalSeconds, label, label)
 }
 
+// writePlistFile writes the plist content to the LaunchAgents directory
+func writePlistFile(name, absScript string, intervalSeconds int) (string, string, error) {
+	home, err := homedir.Dir()
+	if err != nil {
+		return "", "", fmt.Errorf("error getting home directory: %w", err)
+	}
+
+	launchAgentsDir := filepath.Join(home, "Library", "LaunchAgents")
+	if err := os.MkdirAll(launchAgentsDir, launchAgentsDirPerms); err != nil {
+		return "", "", fmt.Errorf("error creating LaunchAgents directory: %w", err)
+	}
+
+	label := fmt.Sprintf("%s.%s", labelPrefix, name)
+	plistPath := filepath.Join(launchAgentsDir, label+".plist")
+
+	plistContent := generatePlist(label, absScript, intervalSeconds)
+	if err := os.WriteFile(plistPath, []byte(plistContent), plistFilePerms); err != nil {
+		return "", "", fmt.Errorf("error writing plist file: %w", err)
+	}
+
+	return label, plistPath, nil
+}
+
 // createCmd represents the create command
 var createCmd = &cobra.Command{
 	Use:   "create",
 	Short: "Create a new launchd cron task",
 	Long: `Create a new launchd cron task with NAME to run SCRIPT over an INTERVAL.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		// Get flag values
-		name, _ := cmd.Flags().GetString("name")
-		interval, _ := cmd.Flags().GetString("interval")
-		script, _ := cmd.Flags().GetString("script")
-
 		// Validate interval can be parsed as time.Duration
-		duration, err := time.ParseDuration(interval)
+		duration, err := time.ParseDuration(createInterval)
 		if err != nil {
-			return fmt.Errorf("invalid interval '%s': must be a valid duration (e.g., 1h, 30m, 1h30m): %w", interval, err)
+			return fmt.Errorf("invalid interval '%s': must be a valid duration (e.g., 1h, 30m, 1h30m): %w", createInterval, err)
 		}
 
-		// Convert script to absolute path
-		absScript, err := filepath.Abs(script)
+		// Validate script file exists and resolve to absolute path
+		absScript, err := validateAndResolveScript(createScript)
 		if err != nil {
-			return fmt.Errorf("error resolving script path: %w", err)
+			return err
 		}
-
-		// Validate script file exists
-		if _, err := os.Stat(absScript); os.IsNotExist(err) {
-			return fmt.Errorf("script file does not exist: %s", absScript)
-		} else if err != nil {
-			return fmt.Errorf("error checking script file: %w", err)
-		}
-
-		// Get home directory
-		home, err := homedir.Dir()
-		if err != nil {
-			return fmt.Errorf("error getting home directory: %w", err)
-		}
-
-		// Create LaunchAgents directory path
-		launchAgentsDir := filepath.Join(home, "Library", "LaunchAgents")
-
-		// Ensure LaunchAgents directory exists
-		if err := os.MkdirAll(launchAgentsDir, 0755); err != nil {
-			return fmt.Errorf("error creating LaunchAgents directory: %w", err)
-		}
-
-		// Generate label and filename
-		label := fmt.Sprintf("com.macron.%s", name)
-		plistFilename := fmt.Sprintf("%s.plist", label)
-		plistPath := filepath.Join(launchAgentsDir, plistFilename)
 
 		// Convert duration to seconds
 		intervalSeconds := int(duration.Seconds())
 
-		// Generate plist content
-		plistContent := generatePlist(label, absScript, intervalSeconds)
-
-		// Write plist file
-		if err := os.WriteFile(plistPath, []byte(plistContent), 0644); err != nil {
-			return fmt.Errorf("error writing plist file: %w", err)
+		// Write plist file to LaunchAgents directory
+		label, plistPath, err := writePlistFile(createName, absScript, intervalSeconds)
+		if err != nil {
+			return err
 		}
 
+		// Output success message
 		fmt.Printf("Successfully created launchd task:\n")
 		fmt.Printf("  Label: %s\n", label)
-		fmt.Printf("  Interval: %s (%d seconds)\n", interval, intervalSeconds)
+		fmt.Printf("  Interval: %s (%d seconds)\n", createInterval, intervalSeconds)
 		fmt.Printf("  Script: %s\n", absScript)
 		fmt.Printf("  Plist: %s\n", plistPath)
 		fmt.Printf("\nTo load the task, run:\n")
@@ -137,9 +151,9 @@ func init() {
 	rootCmd.AddCommand(createCmd)
 
 	// Define flags for the create command
-	createCmd.Flags().StringVarP(&name, "name", "n", "", "Name of the launchd task (required)")
-	createCmd.Flags().StringVarP(&interval, "interval", "i", "", "Interval for the task execution (required)")
-	createCmd.Flags().StringVarP(&script, "script", "s", "", "Path to the script to execute (required)")
+	createCmd.Flags().StringVarP(&createName, "name", "n", "", "Name of the launchd task (required)")
+	createCmd.Flags().StringVarP(&createInterval, "interval", "i", "", "Interval for the task execution (required)")
+	createCmd.Flags().StringVarP(&createScript, "script", "s", "", "Path to the script to execute (required)")
 
 	// Mark flags as required
 	createCmd.MarkFlagRequired("name")
