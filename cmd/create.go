@@ -24,8 +24,10 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
+	"github.com/mitchellh/go-homedir"
 	"github.com/spf13/cobra"
 )
 
@@ -34,6 +36,30 @@ var (
 	interval string
 	script   string
 )
+
+// generatePlist creates the plist XML content for a launchd task
+func generatePlist(label, scriptPath string, intervalSeconds int) string {
+	return fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>%s</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>%s</string>
+	</array>
+	<key>StartInterval</key>
+	<integer>%d</integer>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>StandardOutPath</key>
+	<string>/tmp/%s.stdout</string>
+	<key>StandardErrorPath</key>
+	<string>/tmp/%s.stderr</string>
+</dict>
+</plist>`, label, scriptPath, intervalSeconds, label, label)
+}
 
 // createCmd represents the create command
 var createCmd = &cobra.Command{
@@ -52,17 +78,56 @@ var createCmd = &cobra.Command{
 			return fmt.Errorf("invalid interval '%s': must be a valid duration (e.g., 1h, 30m, 1h30m): %w", interval, err)
 		}
 
+		// Convert script to absolute path
+		absScript, err := filepath.Abs(script)
+		if err != nil {
+			return fmt.Errorf("error resolving script path: %w", err)
+		}
+
 		// Validate script file exists
-		if _, err := os.Stat(script); os.IsNotExist(err) {
-			return fmt.Errorf("script file does not exist: %s", script)
+		if _, err := os.Stat(absScript); os.IsNotExist(err) {
+			return fmt.Errorf("script file does not exist: %s", absScript)
 		} else if err != nil {
 			return fmt.Errorf("error checking script file: %w", err)
 		}
 
-		fmt.Printf("Creating launchd cron task:\n")
-		fmt.Printf("  Name: %s\n", name)
-		fmt.Printf("  Interval: %s (%v)\n", interval, duration)
-		fmt.Printf("  Script: %s\n", script)
+		// Get home directory
+		home, err := homedir.Dir()
+		if err != nil {
+			return fmt.Errorf("error getting home directory: %w", err)
+		}
+
+		// Create LaunchAgents directory path
+		launchAgentsDir := filepath.Join(home, "Library", "LaunchAgents")
+
+		// Ensure LaunchAgents directory exists
+		if err := os.MkdirAll(launchAgentsDir, 0755); err != nil {
+			return fmt.Errorf("error creating LaunchAgents directory: %w", err)
+		}
+
+		// Generate label and filename
+		label := fmt.Sprintf("com.macron.%s", name)
+		plistFilename := fmt.Sprintf("%s.plist", label)
+		plistPath := filepath.Join(launchAgentsDir, plistFilename)
+
+		// Convert duration to seconds
+		intervalSeconds := int(duration.Seconds())
+
+		// Generate plist content
+		plistContent := generatePlist(label, absScript, intervalSeconds)
+
+		// Write plist file
+		if err := os.WriteFile(plistPath, []byte(plistContent), 0644); err != nil {
+			return fmt.Errorf("error writing plist file: %w", err)
+		}
+
+		fmt.Printf("Successfully created launchd task:\n")
+		fmt.Printf("  Label: %s\n", label)
+		fmt.Printf("  Interval: %s (%d seconds)\n", interval, intervalSeconds)
+		fmt.Printf("  Script: %s\n", absScript)
+		fmt.Printf("  Plist: %s\n", plistPath)
+		fmt.Printf("\nTo load the task, run:\n")
+		fmt.Printf("  launchctl load %s\n", plistPath)
 
 		return nil
 	},
