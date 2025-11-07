@@ -23,6 +23,8 @@ package cmd
 
 import (
 	"fmt"
+	"os"
+	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -38,16 +40,31 @@ var createCmd = &cobra.Command{
 	Use:   "create",
 	Short: "Create a new launchd cron task",
 	Long: `Create a new launchd cron task with NAME to run SCRIPT over an INTERVAL.`,
-	Run: func(cmd *cobra.Command, args []string) {
+	RunE: func(cmd *cobra.Command, args []string) error {
 		// Get flag values
 		name, _ := cmd.Flags().GetString("name")
 		interval, _ := cmd.Flags().GetString("interval")
 		script, _ := cmd.Flags().GetString("script")
 
+		// Validate interval can be parsed as time.Duration
+		duration, err := time.ParseDuration(interval)
+		if err != nil {
+			return fmt.Errorf("invalid interval '%s': must be a valid duration (e.g., 1h, 30m, 1h30m): %w", interval, err)
+		}
+
+		// Validate script file exists
+		if _, err := os.Stat(script); os.IsNotExist(err) {
+			return fmt.Errorf("script file does not exist: %s", script)
+		} else if err != nil {
+			return fmt.Errorf("error checking script file: %w", err)
+		}
+
 		fmt.Printf("Creating launchd cron task:\n")
 		fmt.Printf("  Name: %s\n", name)
-		fmt.Printf("  Interval: %s\n", interval)
+		fmt.Printf("  Interval: %s (%v)\n", interval, duration)
 		fmt.Printf("  Script: %s\n", script)
+
+		return nil
 	},
 }
 
