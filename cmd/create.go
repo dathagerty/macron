@@ -27,26 +27,40 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var (
+	name     string
+	interval string
+	script   string
+)
+
 // createCmd represents the create command
 var createCmd = &cobra.Command{
 	Use:   "create",
 	Short: "Create a new launchd cron task",
 	Long: `Create a new launchd cron task with NAME to run SCRIPT over an INTERVAL.`,
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Println("create called")
+		// Get flag values
+		name, _ := cmd.Flags().GetString("name")
+		interval, _ := cmd.Flags().GetString("interval")
+		script, _ := cmd.Flags().GetString("script")
+
+		fmt.Printf("Creating launchd cron task:\n")
+		fmt.Printf("  Name: %s\n", name)
+		fmt.Printf("  Interval: %s\n", interval)
+		fmt.Printf("  Script: %s\n", script)
 	},
 }
 
 func init() {
 	rootCmd.AddCommand(createCmd)
 
-	// Here you will define your flags and configuration settings.
+	// Define flags for the create command
+	createCmd.Flags().StringVarP(&name, "name", "n", "", "Name of the launchd task (required)")
+	createCmd.Flags().StringVarP(&interval, "interval", "i", "", "Interval for the task execution (required)")
+	createCmd.Flags().StringVarP(&script, "script", "s", "", "Path to the script to execute (required)")
 
-	// Cobra supports Persistent Flags which will work for this command
-	// and all subcommands, e.g.:
-	// createCmd.PersistentFlags().String("foo", "", "A help for foo")
-
-	// Cobra supports local flags which will only run when this command
-	// is called directly, e.g.:
-	// createCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
+	// Mark flags as required
+	createCmd.MarkFlagRequired("name")
+	createCmd.MarkFlagRequired("interval")
+	createCmd.MarkFlagRequired("script")
 }
