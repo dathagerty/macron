@@ -25,9 +25,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"time"
 
-	"github.com/mitchellh/go-homedir"
 	"github.com/spf13/cobra"
 )
 
@@ -86,7 +86,7 @@ func generatePlist(label, scriptPath string, intervalSeconds int) string {
 
 // writePlistFile writes the plist content to the LaunchAgents directory
 func writePlistFile(name, absScript string, intervalSeconds int) (string, string, error) {
-	home, err := homedir.Dir()
+	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", "", fmt.Errorf("error getting home directory: %w", err)
 	}
@@ -98,6 +98,11 @@ func writePlistFile(name, absScript string, intervalSeconds int) (string, string
 
 	label := fmt.Sprintf("%s.%s", labelPrefix, name)
 	plistPath := filepath.Join(launchAgentsDir, label+".plist")
+
+	// Check if plist file already exists
+	if _, err := os.Stat(plistPath); err == nil {
+		return "", "", fmt.Errorf("plist file already exists: %s (remove it first or use a different name)", plistPath)
+	}
 
 	plistContent := generatePlist(label, absScript, intervalSeconds)
 	if err := os.WriteFile(plistPath, []byte(plistContent), plistFilePerms); err != nil {
@@ -113,6 +118,11 @@ var createCmd = &cobra.Command{
 	Short: "Create a new launchd cron task",
 	Long: `Create a new launchd cron task with NAME to run SCRIPT over an INTERVAL.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		// Check platform - only works on macOS
+		if runtime.GOOS != "darwin" {
+			return fmt.Errorf("create command is only supported on macOS (current platform: %s)", runtime.GOOS)
+		}
+
 		// Validate interval can be parsed as time.Duration
 		duration, err := time.ParseDuration(createInterval)
 		if err != nil {
